@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from 'react'
 import Cell from './Cell';
 
 type BoardProps = {
@@ -7,32 +8,127 @@ type BoardProps = {
   size?: number; 
 };
 
-export default function Board({ size = 8 }: BoardProps) {
-  const totalCells = size * size;
-  const cells = Array(totalCells).fill(0);
-  
-  // 中央の4マスに初期状態の石（黒・白）を配置する
-  const centerRow = size / 2;
-  const centerCol = size / 2;
-  
-  cells[(centerRow - 1) * size + (centerCol - 1)] = -1;
-  cells[(centerRow - 1) * size + centerCol] = 1;
-  cells[centerRow * size + (centerCol - 1)] = 1;
-  cells[centerRow * size + centerCol] = -1;
+// 探索用の8方向（上、右上、右、右下、下、左下、左、左上）
+const DIRECTIONS = [
+  [-1, 0], [-1, 1], [0, 1], [1, 1],
+  [1, 0], [1, -1], [0, -1], [-1, -1]
+];
 
+export default function Board({ size = 8 }: BoardProps) {
+  // --- 状態（State）の定義 ---
+  // useStateを使って、盤面のデータと現在のターンを管理します。
+  const [cells, setCells] = useState<(1 | -1 | 0)[]>(() => {
+    // 初回のみ実行される初期盤面の生成ロジック
+    const initialCells = Array(size * size).fill(0) as (1 | -1 | 0)[];
+    const centerRow = size / 2;
+    const centerCol = size / 2;
+    initialCells[(centerRow - 1) * size + (centerCol - 1)] = -1;
+    initialCells[(centerRow - 1) * size + centerCol] = 1;
+    initialCells[centerRow * size + (centerCol - 1)] = 1;
+    initialCells[centerRow * size + centerCol] = -1;
+    return initialCells;
+  });
+  // 1: 黒, -1: 白。最初は黒番からスタート
+  const [currentPlayer, setCurrentPlayer] = useState<1 | -1>(1);
+  // --- ゲームロジック ---
+  /**
+   * 指定したマスに石を置いた場合、裏返せるマスのインデックス配列を返す
+   */
+  const getFlippableDisks = (index: number, player: 1 | -1, currentCells: (1 | -1 | 0)[]) => {
+    // すでに石が置かれている場合は裏返せない
+    if (currentCells[index] !== 0) return [];
+    const row = Math.floor(index / size);
+    const col = index % size;
+    const flippable: number[] = [];
+    // 8方向を順番に探索
+    for (const [dr, dc] of DIRECTIONS) {
+      let r = row + dr;
+      let c = col + dc;
+      const flippedInDir: number[] = [];
+      // 盤面の範囲内にいる間ループ
+      while (r >= 0 && r < size && c >= 0 && c < size) {
+        const targetIndex = r * size + c;
+        const targetDisk = currentCells[targetIndex];
+        if (targetDisk === 0) {
+          // 空マスにぶつかったらこの方向は裏返せない
+          break;
+        }
+        if (targetDisk === player) {
+          // 自分の石で挟めたので、これまで見つけた相手の石を「裏返せるリスト」に追加
+          flippable.push(...flippedInDir);
+          break;
+        }
+        
+        // 相手の石なら候補に追加して、さらに奥へ進む
+        flippedInDir.push(targetIndex);
+        r += dr;
+        c += dc;
+      }
+    }
+    return flippable;
+  };
+  /**
+   * マスがクリックされた時の処理
+   */
+  const handleCellClick = (index: number) => {
+    // 1. 裏返せる石を計算
+    const flippableDisks = getFlippableDisks(index, currentPlayer, cells);
+    // 2. 裏返せる石が1つもなければ何もせず終了
+    if (flippableDisks.length === 0) return;
+    
+    // 3. 盤面の状態を更新
+    const newCells = [...cells];
+    newCells[index] = currentPlayer;
+    flippableDisks.forEach(flipIndex => {
+      newCells[flipIndex] = currentPlayer;
+    });
+
+    // 4. 次のターンの判定（パスとゲーム終了のロジック）
+    const nextPlayer = (currentPlayer * -1) as 1 | -1;
+    
+    // 次のプレイヤーが打てる場所を全マス探索して確認
+    const hasNextMove = newCells.some((_, i) => getFlippableDisks(i, nextPlayer, newCells).length > 0);
+
+    if (hasNextMove) {
+      // 普通にターン交代
+      setCells(newCells);
+      setCurrentPlayer(nextPlayer);
+    } else {
+      // 次のプレイヤーがパスになる場合、現在のプレイヤーがもう一度打てるか確認
+      const hasCurrentMove = newCells.some((_, i) => getFlippableDisks(i, currentPlayer, newCells).length > 0);
+      
+      setCells(newCells);
+      if (hasCurrentMove) {
+        // 相手が打てないのでパス。連続で自分のターンになる
+        setTimeout(() => alert(`${nextPlayer === 1 ? '黒' : '白'}は打てる場所がないため、パスになります！`), 10);
+      } else {
+        // どちらも打てない＝盤面が埋まったか完全にロックされたためゲーム終了
+        const blackCount = newCells.filter(c => c === 1).length;
+        const whiteCount = newCells.filter(c => c === -1).length;
+        setTimeout(() => alert(`ゲーム終了！\n黒: ${blackCount} 枚\n白: ${whiteCount} 枚`), 10);
+      }
+    }
+  };
+  // --- 描画（UI） ---
   return (
-    // Tailwindの動的クラス生成制限を回避するため、gridTemplateColumnsのみインラインスタイルで指定
-    <div 
-      className="grid gap-0 border-2 border-black bg-black w-max mx-auto p-1 shadow-2xl"
-      style={{ gridTemplateColumns: `repeat(${size}, minmax(0, 1fr))` }}
-    >
-      {cells.map((disk, index) => (
-        <Cell 
-          key={index} 
-          disk={disk} 
-          onClick={() => console.log(`Cell ${index} clicked`)} 
-        />
-      ))}
+    <div className="flex flex-col items-center">
+      {/* どっちのターンか分かりやすいように表示を追加 */}
+      <div className="mb-4 text-xl font-bold text-gray-800">
+        現在のターン: {currentPlayer === 1 ? '黒' : '白'}
+      </div>
+      
+      <div 
+        className="grid gap-0 border-2 border-black bg-black w-max mx-auto p-1 shadow-2xl"
+        style={{ gridTemplateColumns: `repeat(${size}, minmax(0, 1fr))` }}
+      >
+        {cells.map((disk, index) => (
+          <Cell 
+            key={index} 
+            disk={disk} 
+            onClick={() => handleCellClick(index)} 
+          />
+        ))}
+      </div>
     </div>
   );
 }
