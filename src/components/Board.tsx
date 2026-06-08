@@ -109,16 +109,39 @@ export default function Board({ size = 8 }: BoardProps) {
       }
     }
   };
+
+    // 盤面から各色の石の数を計算
+  const blackCount = cells.filter(c => c === 1).length;
+  const whiteCount = cells.filter(c => c === -1).length;
+
   // --- 描画（UI） ---
   return (
-    <div className="flex flex-col items-center">
-      {/* どっちのターンか分かりやすいように表示を追加 */}
-      <div className="mb-4 text-xl font-bold text-gray-800">
-        現在のターン: {currentPlayer === 1 ? '黒' : '白'}
+    <div className="flex flex-col items-center w-full max-w-md mx-auto">
+      {/* スコアボード（Glassmorphismを取り入れたリッチなUI） */}
+      <div className="flex items-center justify-between w-full mb-8 bg-white/80 backdrop-blur-md shadow-lg rounded-2xl p-4 border border-gray-200">
+        
+        {/* 黒（Black）のスコア */}
+        <div className={`flex flex-col items-center px-6 py-2 rounded-xl transition-all duration-300 ${currentPlayer === 1 ? 'bg-gray-900 text-white scale-110 shadow-lg' : 'bg-transparent text-gray-400 scale-100'}`}>
+          <div className="text-xs font-bold tracking-wider mb-1">BLACK</div>
+          <div className="text-3xl font-black">{blackCount}</div>
+        </div>
+        {/* ターンインジケーター（どっちのターンか視覚的に表現） */}
+        <div className="flex flex-col items-center px-4">
+          <div className="text-[10px] font-bold tracking-widest text-gray-400 mb-2">CURRENT TURN</div>
+          <div className="w-6 h-6 rounded-full shadow-inner border border-gray-300 transition-colors duration-500"
+               style={{ backgroundColor: currentPlayer === 1 ? '#111827' : '#ffffff' }}
+          />
+        </div>
+        {/* 白（White）のスコア */}
+        <div className={`flex flex-col items-center px-6 py-2 rounded-xl transition-all duration-300 ${currentPlayer === -1 ? 'bg-white text-gray-900 scale-110 shadow-lg border border-gray-200' : 'bg-transparent text-gray-400 scale-100'}`}>
+          <div className="text-xs font-bold tracking-wider mb-1">WHITE</div>
+          <div className="text-3xl font-black">{whiteCount}</div>
+        </div>
       </div>
       
+      {/* 盤面 */}
       <div 
-        className="grid gap-0 border-2 border-black bg-black w-max mx-auto p-1 shadow-2xl"
+        className="grid gap-0 border-4 border-gray-800 bg-gray-800 w-max mx-auto p-1 shadow-2xl rounded-md"
         style={{ gridTemplateColumns: `repeat(${size}, minmax(0, 1fr))` }}
       >
         {cells.map((disk, index) => (
