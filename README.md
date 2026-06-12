@@ -20,12 +20,12 @@ React / Next.js を使用して構築されています。
 ## 環境構築と起動方法
 
 ### 1. 依存パッケージのインストール
-`bash
+`
 npm install
 `
 
 ### 2. 開発サーバーの起動
-`bash
+`
 npm run dev
 `
 
