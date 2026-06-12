@@ -4,52 +4,55 @@ import { useState, useEffect } from 'react';
 import Cell from './Cell';
 
 type BoardProps = {
-  /** 盤面の辺のサイズ（偶数必須）。未指定時は標準の8 */
   size?: number; 
+  gameMode: 'pvp' | 'pvc' | 'cvc';
+  playerColor: 1 | -1;
+  onBackToTitle: () => void;
 };
 
-// 環境変数からAPIのURLを取得（未設定時はデフォルト値）
+type GameMessage = {
+  title: string;
+  description: string;
+} | null;
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
-export default function Board({ size = 8 }: BoardProps) {
+export default function Board({ size = 8, gameMode, playerColor, onBackToTitle }: BoardProps) {
   const [cells, setCells] = useState<(1 | -1 | 0)[]>([]);
   const [currentPlayer, setCurrentPlayer] = useState<1 | -1>(1);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [blackCount, setBlackCount] = useState<number>(0);
   const [whiteCount, setWhiteCount] = useState<number>(0);
-
-  // 【新機能】CPU対戦モードのフラグと、ゲーム終了フラグを追加
-  const [isCpuMode, setIsCpuMode] = useState<boolean>(true);
   const [isGameOver, setIsGameOver] = useState<boolean>(false);
+  
+  const [gameMessage, setGameMessage] = useState<GameMessage>(null);
 
-  // オリジナルの初期化ロジック
+  const isBlackAi = gameMode === 'cvc' || (gameMode === 'pvc' && playerColor === -1);
+  const isWhiteAi = gameMode === 'cvc' || (gameMode === 'pvc' && playerColor === 1);
+
   useEffect(() => {
     const fetchInitialBoard = async () => {
       try {
         setIsLoading(true);
-        const res = await fetch(`${API_BASE_URL}/api/init?size=${size}`, {
-          method: 'POST',
-        });
-        
+        const res = await fetch(`${API_BASE_URL}/api/init?size=${size}`, { method: 'POST' });
         if (!res.ok) throw new Error('Failed to fetch initial board');
         
         const data = await res.json();
         setCells(data.cells);
-        setCurrentPlayer(data.current_player); // 初期化時は current_player
+        setCurrentPlayer(data.current_player);
         setBlackCount(data.cells.filter((c: number) => c === 1).length);
         setWhiteCount(data.cells.filter((c: number) => c === -1).length);
         setIsGameOver(false);
+        setGameMessage(null);
       } catch (error) {
-        console.error("Error initializing game:", error);
+        console.error(error);
       } finally {
         setIsLoading(false);
       }
     };
-
     fetchInitialBoard();
   }, [size]);
 
-  // 【新機能】リスタート処理（初期化と同じ）
   const handleRestart = async () => {
     try {
       setIsLoading(true);
@@ -61,6 +64,7 @@ export default function Board({ size = 8 }: BoardProps) {
       setBlackCount(data.cells.filter((c: number) => c === 1).length);
       setWhiteCount(data.cells.filter((c: number) => c === -1).length);
       setIsGameOver(false);
+      setGameMessage(null);
     } catch (error) {
       console.error(error);
     } finally {
@@ -68,94 +72,98 @@ export default function Board({ size = 8 }: BoardProps) {
     }
   };
 
-  // オリジナルの人間が石を置くロジック
+  const processApiResponse = (data: any) => {
+    setCells(data.cells);
+    setCurrentPlayer(data.next_player);
+    setBlackCount(data.black_count);
+    setWhiteCount(data.white_count);
+
+    if (data.is_game_over) {
+      setIsGameOver(true);
+      
+      let winnerText = data.black_count > data.white_count ? 'BLACK WINS' : (data.white_count > data.black_count ? 'WHITE WINS' : 'DRAW');
+      let titleText = 'GAME OVER';
+
+      // 「人間 VS CPU」モードの時だけ、YOU WIN / YOU LOSE の判定を入れる
+      if (gameMode === 'pvc') {
+        const isBlackWin = data.black_count > data.white_count;
+        const isWhiteWin = data.white_count > data.black_count;
+        const isPlayerBlack = playerColor === 1;
+        
+        if ((isBlackWin && isPlayerBlack) || (isWhiteWin && !isPlayerBlack)) {
+          titleText = 'YOU WIN !!';
+        } else if ((isWhiteWin && isPlayerBlack) || (isBlackWin && !isPlayerBlack)) {
+          titleText = 'YOU LOSE...';
+        } else {
+          titleText = 'DRAW GAME';
+        }
+      }
+
+      setGameMessage({
+        title: titleText,
+        description: `${winnerText} (Black: ${data.black_count} / White: ${data.white_count})`
+      });
+    } else if (data.is_pass) {
+      setGameMessage({
+        title: 'PASS',
+        description: `${data.next_player === 1 ? 'Black' : 'White'} has no valid moves.`
+      });
+      setTimeout(() => setGameMessage(null), 2000);
+    }
+  };
+
   const handleCellClick = async (index: number) => {
     if (cells[index] !== 0 || isLoading || isGameOver) return;
-    
-    // 【新機能】CPUモード時、CPUのターンなら人間のクリックを禁止する
-    if (isCpuMode && currentPlayer === -1) return;
+    if ((currentPlayer === 1 && isBlackAi) || (currentPlayer === -1 && isWhiteAi)) return;
 
     try {
       setIsLoading(true);
       const res = await fetch(`${API_BASE_URL}/api/move`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          cells,
-          current_player: currentPlayer,
-          size,
-          move_index: index,
-        }),
+        body: JSON.stringify({ cells, current_player: currentPlayer, size, move_index: index }),
       });
 
       if (!res.ok) return;
-
       const data = await res.json();
-      
-      setCells(data.cells);
-      setCurrentPlayer(data.next_player); // 手を打った後は next_player
-      setBlackCount(data.black_count);
-      setWhiteCount(data.white_count);
-
-      if (data.is_game_over) {
-        setIsGameOver(true);
-        setTimeout(() => alert(`ゲーム終了！\n黒: ${data.black_count} 枚\n白: ${data.white_count} 枚`), 10);
-      } else if (data.is_pass) {
-        setTimeout(() => alert(`${data.next_player === 1 ? '黒' : '白'}は打てる場所がないため、パスになります！`), 10);
-      }
-
+      processApiResponse(data);
     } catch (error) {
-      console.error("Error making move:", error);
+      console.error(error);
     } finally {
       setIsLoading(false);
     }
   };
 
-  // 【新機能】CPUの手番になったら自動的にAPIを叩くロジックを追加
   useEffect(() => {
     const handleCpuMove = async () => {
       try {
         setIsLoading(true);
-        // 少し考えるフリをして人間らしさを演出
-        await new Promise(resolve => setTimeout(resolve, 1000));
-
-        const res = await fetch(`${API_BASE_URL}/api/ai-move`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            cells,
-            current_player: currentPlayer,
-            size,
+        
+        // API通信と1秒待機を同時にスタートし、両方が終わるまで待つ（最低でも1秒はUIが止まる）
+        const [res] = await Promise.all([
+          fetch(`${API_BASE_URL}/api/ai-move`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cells, current_player: currentPlayer, size }),
           }),
-        });
+          new Promise(resolve => setTimeout(resolve, 1000))
+        ]);
 
         if (!res.ok) return;
-
         const data = await res.json();
-        
-        setCells(data.cells);
-        setCurrentPlayer(data.next_player);
-        setBlackCount(data.black_count);
-        setWhiteCount(data.white_count);
-
-        if (data.is_game_over) {
-          setIsGameOver(true);
-          setTimeout(() => alert(`ゲーム終了！\n黒: ${data.black_count} 枚\n白: ${data.white_count} 枚`), 10);
-        } else if (data.is_pass) {
-          setTimeout(() => alert(`${data.next_player === 1 ? '黒' : '白'}は打てる場所がないため、パスになります！`), 10);
-        }
-
+        processApiResponse(data);
       } catch (error) {
-        console.error("Error fetching AI move:", error);
+        console.error(error);
       } finally {
         setIsLoading(false);
       }
     };
 
-    if (isCpuMode && currentPlayer === -1 && cells.length > 0 && !isGameOver) {
+    const shouldCpuMove = (currentPlayer === 1 && isBlackAi) || (currentPlayer === -1 && isWhiteAi);
+    if (shouldCpuMove && cells.length > 0 && !isGameOver) {
       handleCpuMove();
     }
-  }, [currentPlayer, isCpuMode, cells, size, isGameOver]);
+  }, [currentPlayer, isBlackAi, isWhiteAi, cells, size, isGameOver]);
 
   if (cells.length === 0) {
     return (
@@ -169,27 +177,54 @@ export default function Board({ size = 8 }: BoardProps) {
   return (
     <div className="flex flex-col items-center w-full max-w-md mx-auto relative">
       
-      {/* 【新UI】 モード選択とリスタートボタン */}
       <div className="flex w-full justify-between items-center mb-6 px-2">
-        <button 
-          onClick={() => setIsCpuMode(!isCpuMode)}
-          className={`px-4 py-2 rounded-full font-bold text-xs tracking-wider transition-all shadow-md ${isCpuMode ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-600'}`}
-        >
-          {isCpuMode ? '🤖 VS CPU MODE' : '👤 VS HUMAN MODE'}
-        </button>
-        <button 
-          onClick={handleRestart}
-          className="px-4 py-2 bg-gray-900 text-white rounded-full font-bold text-xs tracking-wider shadow-md hover:bg-gray-800 transition-colors"
-        >
-          RESTART
-        </button>
+        <div className="flex items-center">
+           <span className="px-3 py-1 bg-gray-200 text-gray-600 rounded-full font-bold text-[10px] tracking-widest">
+             {gameMode === 'pvp' ? 'PLAYER VS PLAYER' : gameMode === 'pvc' ? 'PLAYER VS CPU' : 'CPU VS CPU'}
+           </span>
+        </div>
+        <div className="flex gap-2">
+          <button 
+            onClick={handleRestart}
+            className="px-4 py-2 bg-gray-900 text-white rounded-full font-bold text-xs tracking-wider shadow-sm hover:bg-gray-800 transition-colors"
+          >
+            RETRY
+          </button>
+          <button 
+            onClick={onBackToTitle}
+            className="px-4 py-2 bg-white text-gray-600 border border-gray-200 rounded-full font-bold text-xs tracking-wider shadow-sm hover:bg-gray-50 transition-colors"
+          >
+            QUIT
+          </button>
+        </div>
       </div>
 
-      {isLoading && (
+      {isLoading && gameMode !== 'cvc' && (
         <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/40 backdrop-blur-sm rounded-2xl">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 mb-2"></div>
-          {isCpuMode && currentPlayer === -1 && (
-             <div className="font-bold text-gray-800 tracking-widest bg-white/90 px-4 py-1 rounded-full text-xs shadow-sm">AI IS THINKING...</div>
+        </div>
+      )}
+
+      {/* 枠の中に縛られない、画面全体（fixed）を覆うシネマティックなUI */}
+      {gameMessage && (
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
+          <h3 className="text-5xl font-black tracking-widest text-white mb-4 drop-shadow-lg text-center px-4">{gameMessage.title}</h3>
+          <p className="text-xl font-bold text-gray-300 tracking-widest text-center">{gameMessage.description}</p>
+          {isGameOver && (
+            <div className="flex flex-col items-center gap-4 mt-12">
+              <button 
+                onClick={handleRestart}
+                className="px-8 py-3 bg-white text-gray-900 rounded-full font-black tracking-widest shadow-2xl hover:bg-gray-200 hover:scale-105 transition-all w-64"
+              >
+                PLAY AGAIN
+              </button>
+              <button 
+                onClick={onBackToTitle}
+                className="px-8 py-3 bg-transparent text-gray-400 border border-gray-600 rounded-full font-bold tracking-widest hover:text-white hover:border-gray-400 hover:bg-gray-800 transition-all w-64"
+              >
+                BACK TO TITLE
+              </button>
+            </div>
           )}
         </div>
       )}
@@ -206,7 +241,7 @@ export default function Board({ size = 8 }: BoardProps) {
           <div className="w-6 h-6 rounded-full shadow-inner border border-gray-300 transition-colors duration-500 flex items-center justify-center"
                style={{ backgroundColor: currentPlayer === 1 ? '#111827' : '#ffffff' }}
           >
-            {isCpuMode && currentPlayer === -1 && <span className="text-[10px]">🤖</span>}
+            {((currentPlayer === 1 && isBlackAi) || (currentPlayer === -1 && isWhiteAi)) && <span className="text-[10px]">🤖</span>}
           </div>
         </div>
 
